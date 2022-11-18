@@ -1,5 +1,3 @@
-using System.Text.Json.Serialization;
-
 namespace CatalogoApi.Models;
 
 public class Categoria

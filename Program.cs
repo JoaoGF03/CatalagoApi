@@ -1,17 +1,97 @@
+using System.Text;
+using CatalagoApi.Services;
 using CatalogoApi.Context;
 using CatalogoApi.Models;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(c =>
+{
+  c.SwaggerDoc("v1", new() { Title = "CatalogoApi", Version = "v1" });
+
+  c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme()
+  {
+    Name = "Authorization",
+    Type = SecuritySchemeType.ApiKey,
+    Scheme = "Bearer",
+    BearerFormat = "JWT",
+    In = ParameterLocation.Header,
+    Description = "JWT Authorization header using the Bearer scheme.",
+  });
+
+  c.AddSecurityRequirement(new OpenApiSecurityRequirement()
+  {
+    {
+      new OpenApiSecurityScheme
+      {
+        Reference = new OpenApiReference
+        {
+          Type = ReferenceType.SecurityScheme,
+          Id = "Bearer"
+        }
+      },
+      new string[] { }
+    }
+  });
+});
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
 
+builder.Services.AddSingleton<ITokenService>(new TokenService());
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+          .AddJwtBearer(options =>
+          {
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+              ValidateIssuer = true,
+              ValidateAudience = true,
+              ValidateLifetime = true,
+              ValidateIssuerSigningKey = true,
+              ValidIssuer = builder.Configuration["Jwt:Issuer"],
+              ValidAudience = builder.Configuration["Jwt:Issuer"],
+              IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]))
+            };
+          });
+
+builder.Services.AddAuthorization();
+
 var app = builder.Build();
+
+#region User
+app.MapPost("/login", [AllowAnonymous] (User user, ITokenService tokenService) =>
+{
+  if (user is null)
+    return Results.BadRequest("Invalid client credentials");
+
+  if (user.Username == "admin" && user.Password == "admin")
+  {
+    var tokenString = tokenService.GenerateToken(
+        app.Configuration["Jwt:Key"],
+        app.Configuration["Jwt:Issuer"],
+        app.Configuration["Jwt:Issuer"],
+        user
+      );
+
+    return Results.Ok(new { token = tokenString });
+  }
+
+  return Results.Unauthorized();
+})
+.Produces<User>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest)
+.Produces(StatusCodes.Status401Unauthorized)
+.WithName("Login")
+.WithTags("Authentication");
+#endregion
 
 #region CRUD Categoria 
 app.MapPost("/categorias", async (AppDbContext db, Categoria categoria) =>
@@ -28,14 +108,16 @@ app.MapPost("/categorias", async (AppDbContext db, Categoria categoria) =>
 })
 .Produces<Categoria>(StatusCodes.Status201Created)
 .Produces(StatusCodes.Status409Conflict)
-.WithTags("Categorias");
+.WithTags("Categorias")
+.RequireAuthorization();
 
 app.MapGet("/categorias", async (AppDbContext db) =>
 {
   return Results.Ok(await db.Categorias.ToListAsync());
 })
 .Produces<List<Categoria>>(StatusCodes.Status200OK)
-.WithTags("Categorias");
+.WithTags("Categorias")
+.RequireAuthorization();
 
 app.MapGet("/categorias/{id:int}", async (AppDbContext db, int id) =>
 {
@@ -222,5 +304,8 @@ app.UseSwaggerUI();
 
 if (app.Environment.IsDevelopment())
   app.UseDeveloperExceptionPage();
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.Run();
