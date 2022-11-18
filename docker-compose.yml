@@ -1,0 +1,18 @@
+version: '3.7'
+
+services:
+  CatalagoDatabase:
+    image: postgres
+    container_name: CatalagoDatabase
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_USER=catalagodb
+      - POSTGRES_PASSWORD=catalagodb
+      - POSTGRES_DB=catalagodb
+    volumes:
+      - pgdata:/data/postgres
+
+volumes:
+  pgdata:
+    driver: local
